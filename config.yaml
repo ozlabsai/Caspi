@@ -1,0 +1,63 @@
+# Qwen3-ASR Hebrew Fine-tuning Configuration
+
+# Model settings
+model:
+  name: "Qwen/Qwen3-ASR-1.7B"
+  output_dir: "./qwen3-asr-hebrew"
+
+# Dataset settings
+dataset:
+  sources:
+    - "ivrit-ai/crowd-transcribe-v5"
+    - "ivrit-ai/crowd-recital-whisper-training"
+  max_audio_length: 30.0  # seconds
+  min_audio_length: 0.5   # seconds
+  validation_split: 0.05
+
+# LoRA configuration
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.1
+  target_modules:
+    - "q_proj"
+    - "k_proj"
+    - "v_proj"
+    - "o_proj"
+    - "gate_proj"
+    - "up_proj"
+    - "down_proj"
+
+# Training hyperparameters
+training:
+  batch_size: 8
+  gradient_accumulation_steps: 4  # Effective batch size = 32
+  learning_rate: 2.0e-4
+  num_epochs: 3
+  warmup_steps: 500
+  max_grad_norm: 1.0
+
+# Optimization
+optimization:
+  use_bf16: true
+  use_fp16: false
+  gradient_checkpointing: true
+
+# Hardware requirements (for HF Jobs)
+hardware:
+  gpu_type: "A100"  # or "A10G" for budget option
+  gpu_memory: "40GB"
+  num_gpus: 1
+
+# Evaluation
+evaluation:
+  eval_steps: 500
+  save_steps: 1000
+  logging_steps: 50
+  metric: "wer"  # Word Error Rate
+
+# Hugging Face Hub
+hub:
+  push_to_hub: true
+  hub_model_id: "qwen3-asr-hebrew"
+  private: false

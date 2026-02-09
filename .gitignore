@@ -1,0 +1,46 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+venv/
+env/
+.env
+
+# Training outputs
+qwen3-asr-hebrew/
+*.pth
+*.bin
+*.safetensors
+checkpoints/
+runs/
+wandb/
+
+# Dataset cache
+.cache/
+data/
+datasets/
+
+# Logs
+*.log
+logs/
+tensorboard/
+
+# Job scripts
+job_runner.py
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
