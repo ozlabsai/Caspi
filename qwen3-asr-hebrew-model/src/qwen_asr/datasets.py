@@ -3,6 +3,7 @@
 from typing import Optional
 
 from datasets import load_dataset as hf_load_dataset
+from datasets import Audio
 
 
 # Hebrew evaluation datasets configuration
@@ -21,12 +22,19 @@ HEBREW_DATASETS = {
         "text_col": "text",
         "config": None,
     },
-    "common-voice": {
-        "name": "mozilla-foundation/common_voice_17_0",
+    "saspeech": {
+        "name": "upai-inc/saspeech",
         "split": "test",
         "audio_col": "audio",
+        "text_col": "text",
+        "config": None,
+    },
+    "hebrew-speech-kan": {
+        "name": "imvladikon/hebrew_speech_kan",
+        "split": "validation",
+        "audio_col": "audio",
         "text_col": "sentence",
-        "config": "he",
+        "config": None,
     },
 }
 
@@ -34,7 +42,8 @@ HEBREW_DATASETS = {
 def load_hebrew_dataset(
     dataset_key: str,
     streaming: bool = True,
-    split: Optional[str] = None
+    split: Optional[str] = None,
+    decode_audio: bool = False
 ):
     """
     Load a Hebrew ASR dataset.
@@ -43,6 +52,8 @@ def load_hebrew_dataset(
         dataset_key: Key from HEBREW_DATASETS or full dataset name
         streaming: Whether to use streaming mode
         split: Override default split
+        decode_audio: If False, returns raw audio bytes (avoids torchcodec).
+                     If True, uses default audio decoding (requires torchcodec).
 
     Returns:
         Dataset iterator
@@ -63,18 +74,25 @@ def load_hebrew_dataset(
 
     # Load dataset
     if dataset_config:
-        return hf_load_dataset(
+        ds = hf_load_dataset(
             dataset_name,
             dataset_config,
             split=dataset_split,
             streaming=streaming
         )
     else:
-        return hf_load_dataset(
+        ds = hf_load_dataset(
             dataset_name,
             split=dataset_split,
             streaming=streaming
         )
+
+    # Disable automatic audio decoding to avoid torchcodec dependency
+    # Audio will be decoded manually using librosa in AudioProcessor
+    if not decode_audio:
+        ds = ds.cast_column("audio", Audio(decode=False))
+
+    return ds
 
 
 def get_dataset_columns(dataset_key: str) -> dict:
