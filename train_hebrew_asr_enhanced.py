@@ -28,8 +28,10 @@ Incorporates best practices from training-suggestion.md:
 
 import os
 import re
+import json
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Any, Tuple
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -42,6 +44,7 @@ from transformers import (
 )
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 import evaluate
+import wandb
 
 
 @dataclass
@@ -54,7 +57,7 @@ class TrainingConfig:
 
     # Dataset configuration
     datasets: List[str] = None
-    max_audio_length_seconds: float = 30.0
+    max_audio_length_seconds: float = 15.0  # Round 2: reduced from 30.0
     min_audio_length_seconds: float = 0.5
     chunk_overlap_seconds: float = 1.0
 
@@ -74,11 +77,11 @@ class TrainingConfig:
     lora_dropout: float = 0.1
     lora_target_modules: List[str] = None
 
-    # Training hyperparameters
-    batch_size: int = 8
-    gradient_accumulation_steps: int = 4
-    learning_rate: float = 2e-4
-    num_epochs: int = 3
+    # Training hyperparameters (Round 2: optimized for 2x A100)
+    batch_size: int = 2  # Down from 8 for 2x A100
+    gradient_accumulation_steps: int = 16  # Up from 4, effective batch = 64
+    learning_rate: float = 5e-5  # Down from 2e-4, more conservative
+    num_epochs: int = 5  # Up from 3 for gradual unfreezing
     warmup_steps: int = 500
 
     # Optimization
@@ -149,16 +152,19 @@ class HebrewTextNormalizer:
         if self.config.normalize_punctuation:
             # Remove duplicated punctuation
             text = self.punct_pattern.sub(r'\1', text)
-            # Standardize quotes
+            # Standardize quotes (Round 2: consistent normalization)
             text = text.replace('"', '"').replace('"', '"')
             text = text.replace(''', "'").replace(''', "'")
+            # Hebrew-specific: unify geresh and gershayim
+            text = text.replace('״', '"')  # Gershayim
+            text = text.replace('׳', "'")  # Geresh
 
         # 4. Clean whitespace
         text = ' '.join(text.split())
 
-        # 5. TODO: Number normalization (digits -> Hebrew words)
-        # This would require a Hebrew number-to-words library
-        # For now, keeping digits as-is
+        # 5. Number normalization (Round 2: keep consistent)
+        # Keep digits as-is for consistency with training data
+        # If you want to normalize: implement Hebrew number-to-words here
 
         return text.strip()
 
@@ -481,6 +487,252 @@ def compute_metrics(pred, processor, wer_metric, cer_metric):
     return {"wer": wer, "cer": cer}
 
 
+# ============================================================================
+# Round 2: Selective Freezing and Gradual Unfreezing
+# ============================================================================
+
+def setup_round2_freezing_strategy_b(model):
+    """
+    Round 2 Strategy B (Epochs 1-2): Train projector + top LLM only.
+
+    Freeze ALL audio layers to focus on cross-modal adaptation.
+    Based on actual Qwen3-ASR module names from weight map.
+
+    TRAIN:
+        - thinker.audio_tower.proj1.*
+        - thinker.audio_tower.proj2.*
+        - thinker.audio_tower.ln_post.*
+        - thinker.model.layers.16-27.* (top 12 LLM layers)
+        - thinker.lm_head.*
+
+    FREEZE:
+        - thinker.audio_tower.conv*
+        - thinker.audio_tower.layers.0-23.* (ALL audio layers)
+        - thinker.model.layers.0-15.* (bottom 16 LLM layers)
+        - thinker.model.embed_tokens.*
+    """
+    print("\n" + "="*70)
+    print("Round 2 Strategy B: Freezing Configuration")
+    print("="*70)
+
+    # First, freeze everything
+    for param in model.parameters():
+        param.requires_grad = False
+
+    # Unfreeze trainable components
+    trainable_count = 0
+    for name, param in model.named_parameters():
+        # Projector components (ALWAYS TRAIN - cross-modal bottleneck)
+        if any(x in name for x in ["proj1", "proj2", "ln_post"]):
+            param.requires_grad = True
+            trainable_count += param.numel()
+
+        # Top 12 LLM layers (16-27)
+        elif "model.layers" in name:
+            try:
+                layer_num = int(name.split("layers.")[1].split(".")[0])
+                if layer_num >= 16:
+                    param.requires_grad = True
+                    trainable_count += param.numel()
+            except (IndexError, ValueError):
+                pass
+
+        # LM head (output projection)
+        elif "lm_head" in name:
+            param.requires_grad = True
+            trainable_count += param.numel()
+
+    total_params = sum(p.numel() for p in model.parameters())
+    print(f"✓ Strategy B configured:")
+    print(f"  Trainable: {trainable_count:,} ({100*trainable_count/total_params:.1f}%)")
+    print(f"  Frozen: {total_params-trainable_count:,} ({100*(1-trainable_count/total_params):.1f}%)")
+    print(f"  Training: Projector + Top 12 LLM + LM Head")
+    print(f"  Frozen: ALL audio layers + Bottom 16 LLM")
+    print("="*70)
+
+    return model
+
+
+def unfreeze_audio_top_layers(model, num_layers: int = 8):
+    """
+    Unfreeze top N audio layers for Strategy A (Epoch 3+).
+
+    UNFREEZE:
+        - thinker.audio_tower.layers.[24-num_layers]-23.*
+
+    For num_layers=8: unfreezes layers 16-23 (top 8)
+    """
+    print("\n" + "="*70)
+    print(f"Strategy A: Unfreezing Top {num_layers} Audio Layers")
+    print("="*70)
+
+    unfrozen_count = 0
+    start_layer = 24 - num_layers  # 24 total audio layers
+
+    for name, param in model.named_parameters():
+        if "audio_tower.layers" in name:
+            try:
+                layer_num = int(name.split("layers.")[1].split(".")[0])
+                if layer_num >= start_layer:
+                    param.requires_grad = True
+                    unfrozen_count += param.numel()
+            except (IndexError, ValueError):
+                pass
+
+    print(f"✓ Unfroze audio_tower.layers.{start_layer}-23")
+    print(f"  Parameters unfrozen: {unfrozen_count:,}")
+    print("="*70)
+
+
+def create_param_groups_with_discriminative_lrs(model, epoch: int):
+    """
+    Create parameter groups with layer-specific learning rates.
+
+    Epochs 1-2 (Strategy B):
+        - projector: 2e-4
+        - llm_top: 5e-5
+        - lm_head: 1e-4
+
+    Epochs 3-5 (Strategy A):
+        - projector: 1e-4 (reduced)
+        - audio_top: 3e-5 (conservative)
+        - llm_top: 3e-5 (reduced)
+        - lm_head: 1e-4
+    """
+    param_groups = {
+        "projector": [],
+        "llm_top": [],
+        "lm_head": [],
+    }
+
+    if epoch >= 3:
+        param_groups["audio_top"] = []
+
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+
+        # Projector
+        if any(x in name for x in ["proj1", "proj2", "ln_post"]):
+            param_groups["projector"].append(param)
+
+        # Top audio layers (only if unfrozen)
+        elif "audio_tower.layers" in name and epoch >= 3:
+            try:
+                layer_num = int(name.split("layers.")[1].split(".")[0])
+                if layer_num >= 16:
+                    param_groups["audio_top"].append(param)
+            except (IndexError, ValueError):
+                pass
+
+        # Top LLM layers
+        elif "model.layers" in name:
+            try:
+                layer_num = int(name.split("layers.")[1].split(".")[0])
+                if layer_num >= 16:
+                    param_groups["llm_top"].append(param)
+            except (IndexError, ValueError):
+                pass
+
+        # LM head
+        elif "lm_head" in name:
+            param_groups["lm_head"].append(param)
+
+    # Set learning rates based on epoch
+    if epoch < 3:
+        # Strategy B LRs
+        return [
+            {"params": param_groups["projector"], "lr": 2e-4, "name": "projector"},
+            {"params": param_groups["llm_top"], "lr": 5e-5, "name": "llm_top"},
+            {"params": param_groups["lm_head"], "lr": 1e-4, "name": "lm_head"},
+        ]
+    else:
+        # Strategy A LRs (reduced for stability)
+        return [
+            {"params": param_groups["projector"], "lr": 1e-4, "name": "projector"},
+            {"params": param_groups["audio_top"], "lr": 3e-5, "name": "audio_top"},
+            {"params": param_groups["llm_top"], "lr": 3e-5, "name": "llm_top"},
+            {"params": param_groups["lm_head"], "lr": 1e-4, "name": "lm_head"},
+        ]
+
+
+class GradualUnfreezeTrainer(Seq2SeqTrainer):
+    """
+    Custom trainer with gradual unfreezing at epoch boundaries.
+
+    Epochs 1-2: Strategy B (projector + top LLM)
+    Epochs 3-5: Strategy A (+ unfreeze top 8 audio layers)
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.unfroze_audio = False
+        self.strategy_a_enabled = False
+
+    def training_step(self, model, inputs):
+        """Override to check for epoch-based unfreezing."""
+        current_epoch = int(self.state.epoch) if self.state.epoch is not None else 1
+
+        # Unfreeze audio at epoch 3
+        if current_epoch >= 3 and not self.unfroze_audio:
+            print("\n" + "="*70)
+            print(f"EPOCH {current_epoch}: Switching to Strategy A")
+            print("="*70)
+
+            # Unfreeze top audio layers
+            unfreeze_audio_top_layers(model, num_layers=8)
+
+            # Recreate optimizer with new parameter groups
+            self.optimizer = self.create_optimizer()
+
+            self.unfroze_audio = True
+            self.strategy_a_enabled = True
+
+            # Log strategy switch to wandb
+            wandb.log({
+                "training/strategy_switch": current_epoch,
+                "training/strategy": "A",
+                "training/audio_layers_unfrozen": 8,
+            })
+
+            print("✓ Strategy A activated: Projector + Audio Top + LLM Top")
+            print("="*70 + "\n")
+
+        return super().training_step(model, inputs)
+
+    def create_optimizer(self):
+        """Create optimizer with discriminative learning rates."""
+        if self.optimizer is None or self.strategy_a_enabled:
+            current_epoch = int(self.state.epoch) if self.state.epoch is not None else 1
+            param_groups = create_param_groups_with_discriminative_lrs(self.model, current_epoch)
+
+            # Filter out empty groups
+            param_groups = [g for g in param_groups if len(g["params"]) > 0]
+
+            if param_groups:
+                print(f"\nOptimizer configuration (Epoch {current_epoch}):")
+                for group in param_groups:
+                    num_params = sum(p.numel() for p in group["params"])
+                    print(f"  {group['name']:15s}: LR={group['lr']:.0e}, params={num_params:,}")
+
+                self.optimizer = torch.optim.AdamW(
+                    param_groups,
+                    betas=(self.args.adam_beta1, self.args.adam_beta2),
+                    eps=self.args.adam_epsilon,
+                    weight_decay=self.args.weight_decay,
+                )
+            else:
+                # Fallback to default
+                return super().create_optimizer()
+
+        return self.optimizer
+
+
+# ============================================================================
+# End Round 2 Additions
+# ============================================================================
+
+
 def setup_lora_model(model, config: TrainingConfig):
     """Configure LoRA for training."""
     print("\nSetting up LoRA...")
@@ -522,6 +774,74 @@ def main():
     print(f"  ✓ WER + CER evaluation")
     print("=" * 60)
 
+    # Initialize Weights & Biases experiment tracking
+    wandb_run_name = os.environ.get("WANDB_RUN_NAME", "round2-gradual-unfreezing")
+
+    # Load Phase 0 audit results if available
+    phase0_results = None
+    phase0_path = Path("./phase0_audit_results/alignment_report.json")
+    if phase0_path.exists():
+        with open(phase0_path, 'r') as f:
+            phase0_results = json.load(f)
+            print(f"\n✓ Loaded Phase 0 audit results: {phase0_results['decision']}")
+
+    # Initialize wandb
+    wandb.init(
+        project=os.environ.get("WANDB_PROJECT", "qwen3-asr-hebrew"),
+        name=wandb_run_name,
+        config={
+            # Model config
+            "model_name": config.model_name,
+            "output_dir": config.output_dir,
+
+            # Training strategy
+            "strategy": "gradual_unfreezing",
+            "strategy_b_epochs": "1-2",
+            "strategy_a_epochs": "3-5",
+
+            # Hyperparameters
+            "batch_size": config.batch_size,
+            "gradient_accumulation_steps": config.gradient_accumulation_steps,
+            "effective_batch_size": config.batch_size * config.gradient_accumulation_steps,
+            "learning_rate": config.learning_rate,
+            "num_epochs": config.num_epochs,
+            "warmup_steps": config.warmup_steps,
+            "max_audio_length": config.max_audio_length_seconds,
+
+            # LoRA config
+            "lora_r": config.lora_r,
+            "lora_alpha": config.lora_alpha,
+            "lora_dropout": config.lora_dropout,
+
+            # Optimization
+            "bf16": config.bf16,
+            "gradient_checkpointing": config.gradient_checkpointing,
+            "group_by_length": True,
+            "max_grad_norm": 1.0,
+            "optimizer": "adamw_torch_fused",
+
+            # Phase 0 audit results
+            "phase0_low_quality_pct": phase0_results["low_quality_percentage"] if phase0_results else None,
+            "phase0_decision": phase0_results["decision"] if phase0_results else None,
+            "phase0_mean_coverage": phase0_results["coverage_distribution"]["mean"] if phase0_results else None,
+        },
+        tags=["round2", "gradual-unfreezing", "2xA100", "hebrew-asr"],
+        notes=f"Round 2 training with gradual unfreezing (Strategy B→A). Effective batch: {config.batch_size * config.gradient_accumulation_steps}",
+    )
+
+    # Log Phase 0 detailed results as artifact if available
+    if phase0_results:
+        wandb.log({
+            "phase0/total_samples": phase0_results["total_samples"],
+            "phase0/low_quality_count": phase0_results["low_quality_count"],
+            "phase0/low_quality_percentage": phase0_results["low_quality_percentage"],
+            "phase0/coverage_p10": phase0_results["coverage_distribution"]["p10"],
+            "phase0/coverage_p25": phase0_results["coverage_distribution"]["p25"],
+            "phase0/coverage_median": phase0_results["coverage_distribution"]["p50"],
+            "phase0/coverage_p75": phase0_results["coverage_distribution"]["p75"],
+            "phase0/coverage_p90": phase0_results["coverage_distribution"]["p90"],
+        })
+
     # Load processor and model
     print("\nLoading model...")
     processor = AutoProcessor.from_pretrained(config.model_name)
@@ -535,6 +855,9 @@ def main():
 
     if config.gradient_checkpointing:
         model.gradient_checkpointing_enable()
+
+    # Round 2: Apply Strategy B freezing before LoRA
+    model = setup_round2_freezing_strategy_b(model)
 
     model = setup_lora_model(model, config)
 
@@ -564,7 +887,7 @@ def main():
     wer_metric = evaluate.load("wer")
     cer_metric = evaluate.load("cer")
 
-    # Training arguments
+    # Training arguments (Round 2: with length bucketing and grad clipping)
     training_args = Seq2SeqTrainingArguments(
         output_dir=config.output_dir,
         per_device_train_batch_size=config.batch_size,
@@ -586,13 +909,18 @@ def main():
         gradient_checkpointing=config.gradient_checkpointing,
         push_to_hub=True,
         hub_model_id=f"{config.output_dir.replace('./', '')}",
-        report_to=["tensorboard"],
+        report_to=["wandb", "tensorboard"],
         predict_with_generate=True,
         generation_max_length=225,
+        # Round 2 additions:
+        group_by_length=True,  # Simple length-based bucketing
+        max_grad_norm=1.0,     # Gradient clipping for stability
+        optim="adamw_torch_fused",  # Faster fused optimizer
+        weight_decay=0.01,     # Regularization
     )
 
-    # Trainer
-    trainer = Seq2SeqTrainer(
+    # Trainer (Round 2: Gradual Unfreezing)
+    trainer = GradualUnfreezeTrainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
@@ -626,6 +954,9 @@ def main():
     print("Training completed!")
     print(f"Model saved to: {config.output_dir}")
     print("=" * 60)
+
+    # Finish wandb run
+    wandb.finish()
 
 
 if __name__ == "__main__":

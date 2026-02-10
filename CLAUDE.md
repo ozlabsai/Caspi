@@ -31,7 +31,49 @@ uv run fastapi serve_asr.py --host 0.0.0.0 --port 8000
 
 # Run benchmarks against vLLM server
 uv run python scripts/benchmark.py --server http://localhost:8000/v1 --max-samples 100
+
+# Round 2 Training Commands
+# Set up experiment tracking (interactive)
+source scripts/setup_wandb.sh
+
+# Run Phase 0 data quality audit
+uv run python scripts/phase0_align_audit.py
+
+# Run Round 2 training with gradual unfreezing
+uv run python train_round2_gradual.py
+
+# Evaluate Round 2 vs Round 1
+uv run python scripts/eval_round2.py --round1-model OzLabs/Qwen3-ASR-Hebrew-1.7B --round2-model ./qwen3-asr-hebrew-round2
 ```
+
+## Experiment Tracking
+
+The project uses [Weights & Biases (wandb)](https://wandb.ai) for experiment tracking:
+
+**Setup:**
+```bash
+# Quick setup
+wandb login  # Get API key from https://wandb.ai/authorize
+source scripts/setup_wandb.sh  # Interactive configuration
+
+# Manual setup
+export WANDB_PROJECT="qwen3-asr-hebrew"
+export WANDB_RUN_NAME="round2-experiment-name"
+export WANDB_PHASE0_LOGGING="true"  # Optional: log Phase 0 audit
+```
+
+**What's Tracked:**
+- Training metrics (loss, WER, CER)
+- System metrics (GPU memory, utilization)
+- Learning rate schedules (per parameter group)
+- Strategy switches (B→A at epoch 3)
+- Phase 0 data quality audit results
+- All hyperparameters and config
+- Model checkpoints
+
+**View Results:** https://wandb.ai/{username}/qwen3-asr-hebrew
+
+See `wandb_setup.md` for detailed documentation.
 
 ## Architecture
 
