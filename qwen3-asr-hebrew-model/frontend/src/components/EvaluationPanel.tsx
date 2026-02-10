@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { Play, Square, Loader2, Volume2, ChevronUp, ChevronDown, Pause } from 'lucide-react'
+import { Play, Square, Loader2, Volume2, ChevronUp, ChevronDown, Pause, Download } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
@@ -622,6 +622,93 @@ export function EvaluationPanel() {
     setIsPlaying(false)
   }, [])
 
+  // Export results as CSV
+  const exportResults = useCallback(() => {
+    const entriesToExport = filterDataset === 'all' ? entries : filteredEntries
+    if (entriesToExport.length === 0) return
+
+    // CSV header
+    const headers = [
+      'id', 'dataset', 'reference_text', 'predicted_text',
+      'norm_reference_text', 'norm_predicted_text',
+      'wer', 'wil', 'audio_duration', 'transcription_time', 'rtf',
+      'substitutions', 'deletions', 'insertions', 'hits'
+    ]
+
+    // Escape CSV field
+    const escapeCSV = (val: unknown) => {
+      if (val === null || val === undefined) return ''
+      const str = String(val)
+      if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+        return `"${str.replace(/"/g, '""')}"`
+      }
+      return str
+    }
+
+    // Build CSV content
+    const rows = entriesToExport.map(e => [
+      e.id,
+      e.dataset || '',
+      e.reference_text,
+      e.predicted_text,
+      e.norm_reference_text || '',
+      e.norm_predicted_text || '',
+      e.wer,
+      e.wil,
+      e.audio_duration,
+      e.transcription_time,
+      e.audio_duration && e.transcription_time ? (e.transcription_time / e.audio_duration).toFixed(4) : '',
+      e.substitutions ?? '',
+      e.deletions ?? '',
+      e.insertions ?? '',
+      e.hits ?? ''
+    ].map(escapeCSV).join(','))
+
+    const csv = [headers.join(','), ...rows].join('\n')
+
+    // Add summary and timing benchmarks at the end
+    const avgWer = entriesToExport.reduce((sum, e) => sum + e.wer, 0) / entriesToExport.length
+    const totalDuration = entriesToExport.reduce((sum, e) => sum + (e.audio_duration ?? 0), 0)
+    const totalTime = entriesToExport.reduce((sum, e) => sum + (e.transcription_time ?? 0), 0)
+
+    let summary = `\n\n# Summary\n`
+    summary += `Total samples,${entriesToExport.length}\n`
+    summary += `Average WER,${(avgWer * 100).toFixed(2)}%\n`
+    summary += `Total audio duration,${totalDuration.toFixed(1)}s\n`
+    summary += `Total transcription time,${totalTime.toFixed(1)}s\n`
+    summary += `Overall RTF,${(totalTime / totalDuration).toFixed(4)}\n`
+
+    summary += `\n# Timing Benchmarks\n`
+    summary += `Duration,Samples,p50,p90\n`
+    for (const bucket of ['0-5s', '5-15s', '15-30s']) {
+      const data = timingBenchmarks.latency[bucket]
+      if (data && data.count > 0) {
+        summary += `${bucket},${data.count},${data.p50}ms,${data.p90}ms\n`
+      }
+    }
+    if (timingBenchmarks.longForm.count > 0) {
+      summary += `≥30s (speedup),${timingBenchmarks.longForm.count},${timingBenchmarks.longForm.p50}x,${timingBenchmarks.longForm.p90}x\n`
+    }
+
+    // Download using base64 data URL (works over HTTP, no blob)
+    const csvContent = '\ufeff' + csv + summary  // BOM for Excel Hebrew
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+    const datasetName = filterDataset === 'all' ? 'all' : filterDataset
+    const filename = `eval_${datasetName}_${timestamp}.csv`
+
+    // Convert to base64 (handles Unicode/Hebrew properly)
+    const base64 = btoa(unescape(encodeURIComponent(csvContent)))
+    const dataUrl = `data:text/csv;base64,${base64}`
+
+    const link = document.createElement('a')
+    link.href = dataUrl
+    link.download = filename
+    link.style.display = 'none'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  }, [entries, filteredEntries, filterDataset, timingBenchmarks])
+
   // Clean up audio when modal closes
   useEffect(() => {
     if (!selectedEntry) {
@@ -801,7 +888,13 @@ export function EvaluationPanel() {
       {entries.length > 0 && timingBenchmarks.totalSamples > 0 && (
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-lg">Timing Benchmarks</CardTitle>
+            <CardTitle className="text-lg flex items-center justify-between">
+              <span>Timing Benchmarks</span>
+              <Button variant="outline" size="sm" onClick={exportResults}>
+                <Download className="h-4 w-4 mr-1" />
+                Export CSV
+              </Button>
+            </CardTitle>
             <CardDescription>
               Latency (ms) for short segments, Speedup (x) for long-form audio
             </CardDescription>
