@@ -19,7 +19,9 @@ else
     exit 1
 fi
 
-BUCKET_NAME="ozlabs-qwen3-asr"
+# Lambda storage bucket UUID
+# Friendly name: HEBREW-ASR-TRAIN
+BUCKET_NAME="900a8c67-830b-40aa-9bc4-079f4c797735"
 S3_KEY="datasets/qwen3_asr_data/"
 
 echo ""

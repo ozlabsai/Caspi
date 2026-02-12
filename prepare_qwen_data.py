@@ -299,20 +299,16 @@ def upload_to_lambda_storage(data_dir: Path):
         print(f"ERROR: Missing environment variables: {missing}")
         return False
 
-    bucket_name = "ozlabs-qwen3-asr"
+    # Use actual Lambda storage bucket UUID
+    # Name: HEBREW-ASR-TRAIN
+    # Bucket: 900a8c67-830b-40aa-9bc4-079f4c797735
+    bucket_name = "900a8c67-830b-40aa-9bc4-079f4c797735"
     s3_key = "datasets/qwen3_asr_data/"
 
     print(f"\nTarget: s3://{bucket_name}/{s3_key}")
+    print(f"Friendly name: HEBREW-ASR-TRAIN")
     print(f"Endpoint: {os.environ['S3_ENDPOINT_URL']}")
     print(f"Region: {os.environ['AWS_REGION']}")
-
-    # Create bucket if doesn't exist
-    print("\nCreating bucket (if doesn't exist)...")
-    subprocess.run([
-        "aws", "s3", "mb", f"s3://{bucket_name}",
-        "--endpoint-url", os.environ['S3_ENDPOINT_URL'],
-        "--region", os.environ['AWS_REGION']
-    ], capture_output=True)  # Ignore error if bucket exists
 
     # Upload with aws s3 sync (shows progress, handles large files)
     print(f"\nUploading {data_dir}/ to s3://{bucket_name}/{s3_key}")
