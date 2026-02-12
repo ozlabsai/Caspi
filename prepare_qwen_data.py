@@ -351,6 +351,7 @@ def main():
     parser.add_argument("--upload", action="store_true", help="Upload to Lambda Cloud Storage after prep")
     parser.add_argument("--upload-only", action="store_true", help="Skip prep, only upload existing data")
     parser.add_argument("--streaming", action="store_true", help="Use streaming mode (saves disk space, required for large datasets on limited disk)")
+    parser.add_argument("--workers", type=int, help="Number of parallel workers (default: auto-detect)")
     args = parser.parse_args()
 
     out_dir = Path("./qwen3_asr_data")
@@ -372,8 +373,12 @@ def main():
 
     # Detect CPU count
     num_cpus = cpu_count()
-    num_workers = max(1, num_cpus - 2)
-    print(f"System: {num_cpus} CPU cores detected, using {num_workers} workers")
+    if args.workers:
+        num_workers = args.workers
+        print(f"System: {num_cpus} CPU cores detected, using {num_workers} workers (user-specified)")
+    else:
+        num_workers = max(1, min(num_cpus - 2, 8))  # Cap at 8 to avoid "too many open files"
+        print(f"System: {num_cpus} CPU cores detected, using {num_workers} workers (capped at 8 to avoid file limit issues)")
 
     out_dir.mkdir(exist_ok=True)
 
