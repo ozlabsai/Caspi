@@ -311,22 +311,10 @@ def upload_to_lambda_storage(data_dir: Path):
     print(f"Endpoint: {os.environ['S3_ENDPOINT_URL']}")
     print(f"Region: {os.environ['AWS_REGION']}")
 
-    # Check what's already uploaded
-    print(f"\nChecking existing files on S3...")
-    check_result = subprocess.run([
-        "aws", "s3", "ls",
-        f"s3://{bucket_name}/{s3_key}",
-        "--endpoint-url", os.environ['S3_ENDPOINT_URL'],
-        "--region", os.environ['AWS_REGION'],
-        "--recursive"
-    ], capture_output=True, text=True)
-
-    if check_result.returncode == 0 and check_result.stdout:
-        existing_files = len(check_result.stdout.strip().split('\n'))
-        print(f"Found {existing_files:,} existing files on S3")
-        print("'aws s3 sync' will skip unchanged files and only upload new/modified files")
-    else:
-        print("No existing files found (first upload)")
+    # Note: Skip the S3 check to avoid "too many open files" error
+    # aws s3 sync will handle checking automatically
+    print(f"\nNote: 'aws s3 sync' will automatically skip unchanged files")
+    print("Only new or modified files will be uploaded")
 
     # Upload with aws s3 sync (automatically skips existing files!)
     print(f"\nSyncing {data_dir}/ to s3://{bucket_name}/{s3_key}")
