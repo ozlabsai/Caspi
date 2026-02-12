@@ -43,6 +43,81 @@ def decode_audio(audio_bytes, target_sr=16000):
         return None, None
 
 
+def process_dataset_streaming(ds_iter, name, output_dir, split, num_workers):
+    """
+    Process dataset in streaming mode (no full download, processes chunks on-the-fly).
+
+    Args:
+        ds_iter: Streaming dataset iterator
+        name: Dataset name
+        output_dir: Output directory
+        split: Dataset split
+        num_workers: Number of parallel workers
+
+    Returns:
+        Tuple of (jsonl_path, valid_count)
+    """
+    audio_dir = Path(output_dir) / "audio" / split / name.replace("/", "_")
+    audio_dir.mkdir(parents=True, exist_ok=True)
+
+    jsonl = Path(output_dir) / f"{split}_{name.replace('/', '_')}.jsonl"
+
+    # Find text column from first example
+    first_example = next(iter(ds_iter))
+    text_columns = ['sentence', 'transcript', 'text', 'transcription']
+    text_col = next((c for c in text_columns if c in first_example.keys()), None)
+
+    if not text_col:
+        raise ValueError(f"No text column found in {name}")
+
+    print(f"  Text column: {text_col}")
+    print(f"  Processing streaming dataset in batches...")
+
+    valid = 0
+    skipped = 0
+    batch_size = num_workers * 100  # Process in chunks
+
+    # Recreate iterator (we consumed first example)
+    ds_iter = load_dataset(name, split="train", streaming=True)
+
+    with open(jsonl, 'w', encoding='utf-8') as f:
+        batch_args = []
+
+        for idx, example in enumerate(tqdm(ds_iter, desc=f"  {name.split('/')[-1]}", unit="files")):
+            # Collect batch
+            batch_args.append((
+                valid + skipped,  # Use global counter as index
+                example['audio'],
+                example[text_col],
+                audio_dir
+            ))
+
+            # Process batch when full
+            if len(batch_args) >= batch_size:
+                with Pool(num_workers) as pool:
+                    for success, entry, error_reason in pool.imap_unordered(process_single_example, batch_args):
+                        if success:
+                            f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+                            valid += 1
+                        else:
+                            skipped += 1
+
+                batch_args = []  # Reset batch
+
+        # Process remaining batch
+        if batch_args:
+            with Pool(num_workers) as pool:
+                for success, entry, error_reason in pool.imap_unordered(process_single_example, batch_args):
+                    if success:
+                        f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+                        valid += 1
+                    else:
+                        skipped += 1
+
+    print(f"  ✓ {valid} valid examples, {skipped} skipped")
+    return jsonl, valid
+
+
 def process_single_example(args):
     """
     Process a single audio example (for multiprocessing).
@@ -98,7 +173,7 @@ def process_single_example(args):
         return (False, None, f"exception_{str(e)[:50]}")
 
 
-def process_dataset(name, output_dir, split, num_workers=None):
+def process_dataset(name, output_dir, split, num_workers=None, streaming=False):
     """
     Process dataset using raw PyArrow table with multiprocessing.
 
@@ -107,6 +182,7 @@ def process_dataset(name, output_dir, split, num_workers=None):
         output_dir: Output directory for processed data
         split: Dataset split (usually "train")
         num_workers: Number of parallel workers (default: cpu_count() - 2)
+        streaming: If True, use streaming mode to avoid downloading entire dataset (saves disk space)
     """
     print(f"\nProcessing {name}...")
 
@@ -115,12 +191,18 @@ def process_dataset(name, output_dir, split, num_workers=None):
         num_workers = max(1, cpu_count() - 2)  # Leave 2 cores for system
 
     print(f"  Using {num_workers} parallel workers")
+    if streaming:
+        print(f"  Using STREAMING mode (saves disk space)")
 
-    # Load dataset
+    # Load dataset (streaming mode if requested)
     print("  Loading dataset...")
-    ds = load_dataset(name, split="train")
+    ds = load_dataset(name, split="train", streaming=streaming)
 
-    # Access raw PyArrow table directly
+    # For streaming, we'll process in batches without loading all to memory
+    if streaming:
+        return process_dataset_streaming(ds, name, output_dir, split, num_workers)
+
+    # Non-streaming: access raw PyArrow table directly
     arrow_table = ds.data
 
     print(f"  {len(arrow_table)} examples")
@@ -265,6 +347,7 @@ def main():
     parser = argparse.ArgumentParser(description="Prepare Qwen3-ASR training data")
     parser.add_argument("--upload", action="store_true", help="Upload to Lambda Cloud Storage after prep")
     parser.add_argument("--upload-only", action="store_true", help="Skip prep, only upload existing data")
+    parser.add_argument("--streaming", action="store_true", help="Use streaming mode (saves disk space, required for large datasets on limited disk)")
     args = parser.parse_args()
 
     out_dir = Path("./qwen3_asr_data")
@@ -310,7 +393,13 @@ def main():
     total = 0
     for ds_name in datasets:
         try:
-            jsonl_path, count = process_dataset(ds_name, out_dir, "train", num_workers=num_workers)
+            jsonl_path, count = process_dataset(
+                ds_name,
+                out_dir,
+                "train",
+                num_workers=num_workers,
+                streaming=args.streaming
+            )
             jsonls.append(jsonl_path)
             total += count
         except Exception as e:
