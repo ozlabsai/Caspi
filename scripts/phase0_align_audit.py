@@ -309,34 +309,28 @@ class Qwen3AlignerAuditor:
             print(f"\nProcessing {domain} ({len(samples)} samples)...")
 
             for sample in tqdm(samples, desc=domain):
-                try:
-                    # Save audio temporarily (sanitize dataset name for filesystem)
-                    safe_dataset = sample['dataset'].replace('/', '_')
-                    temp_audio = Path(output_dir) / f"temp_{safe_dataset}_{sample['index']}.wav"
+                # Save audio temporarily
+                temp_audio = Path(output_dir) / f"temp_{sample['dataset']}_{sample['index']}.wav"
 
-                    import soundfile as sf
-                    sf.write(
-                        str(temp_audio),
-                        sample["audio"]["array"],
-                        sample["audio"]["sampling_rate"]
-                    )
+                import soundfile as sf
+                sf.write(
+                    str(temp_audio),
+                    sample["audio"]["array"],
+                    sample["audio"]["sampling_rate"]
+                )
 
-                    # Compute metrics
-                    metrics = self.compute_alignment_metrics(
-                        audio_path=str(temp_audio),
-                        transcript=sample["text"],
-                        sample_id=f"{sample['dataset']}_{sample['index']}",
-                        domain=domain
-                    )
+                # Compute metrics
+                metrics = self.compute_alignment_metrics(
+                    audio_path=str(temp_audio),
+                    transcript=sample["text"],
+                    sample_id=f"{sample['dataset']}_{sample['index']}",
+                    domain=domain
+                )
 
-                    all_metrics.append(metrics)
+                all_metrics.append(metrics)
 
-                    # Clean up temp file
-                    temp_audio.unlink()
-                except Exception as e:
-                    print(f"\n  Warning: skipping sample {sample['dataset']}_{sample['index']}: {e}")
-                    if temp_audio.exists():
-                        temp_audio.unlink()
+                # Clean up temp file
+                temp_audio.unlink()
 
         # Compute statistics
         report = self._generate_report(all_metrics, output_dir)
