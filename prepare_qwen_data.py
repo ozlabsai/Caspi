@@ -266,6 +266,7 @@ def process_dataset(name, output_dir, split, num_workers=None, streaming=False):
 def upload_to_lambda_storage(data_dir: Path):
     """
     Upload prepared dataset to Lambda Cloud Storage using S3 API.
+    Uses 'aws s3 sync' which automatically skips files already uploaded.
 
     Requires .env file with:
     - AWS_ACCESS_KEY_ID
@@ -310,9 +311,27 @@ def upload_to_lambda_storage(data_dir: Path):
     print(f"Endpoint: {os.environ['S3_ENDPOINT_URL']}")
     print(f"Region: {os.environ['AWS_REGION']}")
 
-    # Upload with aws s3 sync (shows progress, handles large files)
-    print(f"\nUploading {data_dir}/ to s3://{bucket_name}/{s3_key}")
-    print("This will take 10-30 minutes depending on network speed...")
+    # Check what's already uploaded
+    print(f"\nChecking existing files on S3...")
+    check_result = subprocess.run([
+        "aws", "s3", "ls",
+        f"s3://{bucket_name}/{s3_key}",
+        "--endpoint-url", os.environ['S3_ENDPOINT_URL'],
+        "--region", os.environ['AWS_REGION'],
+        "--recursive"
+    ], capture_output=True, text=True)
+
+    if check_result.returncode == 0 and check_result.stdout:
+        existing_files = len(check_result.stdout.strip().split('\n'))
+        print(f"Found {existing_files:,} existing files on S3")
+        print("'aws s3 sync' will skip unchanged files and only upload new/modified files")
+    else:
+        print("No existing files found (first upload)")
+
+    # Upload with aws s3 sync (automatically skips existing files!)
+    print(f"\nSyncing {data_dir}/ to s3://{bucket_name}/{s3_key}")
+    print("This may take 10-30 minutes for new files...")
+    print("(Already uploaded files will be skipped automatically)")
     print()
 
     result = subprocess.run([
@@ -330,8 +349,8 @@ def upload_to_lambda_storage(data_dir: Path):
     print("\n✅ Upload complete!")
     print(f"\nDataset location: s3://{bucket_name}/{s3_key}")
     print("\nNext steps:")
-    print("  1. Launch Lambda GPU instance")
-    print(f"  2. Download: aws s3 sync s3://{bucket_name}/{s3_key} ./qwen3_asr_data/ --endpoint-url {os.environ['S3_ENDPOINT_URL']}")
+    print("  1. Launch Lambda GPU instance with HEBREW-ASR-TRAIN filesystem")
+    print("  2. Data will be available at: /lambda/nfs/persistent-storage/datasets/qwen3_asr_data/")
     print("  3. Train: uv run python train_hebrew_asr_enhanced.py")
 
     return True
@@ -384,10 +403,26 @@ def main():
     print(f"  Total: ~363 GB raw, ~13,300 hours")
     print()
 
-    # Process all datasets
+    # Process all datasets (skip if already processed)
     jsonls = []
     total = 0
     for ds_name in datasets:
+        # Check if this dataset was already processed
+        expected_jsonl = out_dir / f"train_{ds_name.replace('/', '_')}.jsonl"
+
+        if expected_jsonl.exists():
+            print(f"\n✓ Skipping {ds_name} (already processed)")
+            print(f"  Found: {expected_jsonl}")
+
+            # Count existing samples
+            with open(expected_jsonl) as f:
+                count = sum(1 for _ in f)
+            print(f"  {count:,} examples")
+
+            jsonls.append(expected_jsonl)
+            total += count
+            continue
+
         try:
             jsonl_path, count = process_dataset(
                 ds_name,
