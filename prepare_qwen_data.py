@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 """
-Prepare data for Qwen3-ASR training (with multiprocessing)
+Prepare data for Qwen3-ASR training (with multiprocessing + optional S3 upload)
 Creates JSONL files in the format: {"audio": "path/to/file.wav", "text": "language Hebrew<asr_text>TRANSCRIPTION"}
 
 Uses multiprocessing to speed up audio processing by 10-20x on multi-core machines.
+Optionally uploads to Lambda Cloud Storage via S3 API using credentials from .env file.
 """
 
 import json
 import io
 import random
 import re
+import os
+import subprocess
+import sys
 from pathlib import Path
 from multiprocessing import Pool, cpu_count
 from functools import partial
@@ -177,7 +181,105 @@ def process_dataset(name, output_dir, split, num_workers=None):
     return jsonl, valid
 
 
+def upload_to_lambda_storage(data_dir: Path):
+    """
+    Upload prepared dataset to Lambda Cloud Storage using S3 API.
+
+    Requires .env file with:
+    - AWS_ACCESS_KEY_ID
+    - AWS_SECRET_ACCESS_KEY
+    - AWS_REGION
+    - S3_ENDPOINT_URL
+    """
+    print("\n" + "=" * 70)
+    print("Uploading to Lambda Cloud Storage")
+    print("=" * 70)
+
+    # Load credentials from .env
+    env_file = Path(".env")
+    if not env_file.exists():
+        print("ERROR: .env file not found!")
+        print("Please create .env with Lambda storage credentials")
+        return False
+
+    # Load .env variables
+    with open(env_file) as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith('#'):
+                key, value = line.split('=', 1)
+                os.environ[key] = value.strip('"')
+
+    # Verify required env vars
+    required_vars = ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_REGION', 'S3_ENDPOINT_URL']
+    missing = [v for v in required_vars if v not in os.environ]
+    if missing:
+        print(f"ERROR: Missing environment variables: {missing}")
+        return False
+
+    bucket_name = "ozlabs-qwen3-asr"
+    s3_key = "datasets/qwen3_asr_data/"
+
+    print(f"\nTarget: s3://{bucket_name}/{s3_key}")
+    print(f"Endpoint: {os.environ['S3_ENDPOINT_URL']}")
+    print(f"Region: {os.environ['AWS_REGION']}")
+
+    # Create bucket if doesn't exist
+    print("\nCreating bucket (if doesn't exist)...")
+    subprocess.run([
+        "aws", "s3", "mb", f"s3://{bucket_name}",
+        "--endpoint-url", os.environ['S3_ENDPOINT_URL'],
+        "--region", os.environ['AWS_REGION']
+    ], capture_output=True)  # Ignore error if bucket exists
+
+    # Upload with aws s3 sync (shows progress, handles large files)
+    print(f"\nUploading {data_dir}/ to s3://{bucket_name}/{s3_key}")
+    print("This will take 10-30 minutes depending on network speed...")
+    print()
+
+    result = subprocess.run([
+        "aws", "s3", "sync",
+        str(data_dir),
+        f"s3://{bucket_name}/{s3_key}",
+        "--endpoint-url", os.environ['S3_ENDPOINT_URL'],
+        "--region", os.environ['AWS_REGION']
+    ])
+
+    if result.returncode != 0:
+        print("\n❌ Upload failed!")
+        return False
+
+    print("\n✅ Upload complete!")
+    print(f"\nDataset location: s3://{bucket_name}/{s3_key}")
+    print("\nNext steps:")
+    print("  1. Launch Lambda GPU instance")
+    print(f"  2. Download: aws s3 sync s3://{bucket_name}/{s3_key} ./qwen3_asr_data/ --endpoint-url {os.environ['S3_ENDPOINT_URL']}")
+    print("  3. Train: uv run python train_hebrew_asr_enhanced.py")
+
+    return True
+
+
 def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Prepare Qwen3-ASR training data")
+    parser.add_argument("--upload", action="store_true", help="Upload to Lambda Cloud Storage after prep")
+    parser.add_argument("--upload-only", action="store_true", help="Skip prep, only upload existing data")
+    args = parser.parse_args()
+
+    out_dir = Path("./qwen3_asr_data")
+
+    # Upload-only mode
+    if args.upload_only:
+        if not out_dir.exists():
+            print(f"ERROR: {out_dir} does not exist!")
+            print("Run without --upload-only to prepare data first")
+            sys.exit(1)
+
+        success = upload_to_lambda_storage(out_dir)
+        sys.exit(0 if success else 1)
+
+    # Normal prep workflow
     print("=" * 70)
     print("Qwen3-ASR Data Preparation (Multiprocessing Edition)")
     print("=" * 70)
@@ -187,7 +289,6 @@ def main():
     num_workers = max(1, num_cpus - 2)
     print(f"System: {num_cpus} CPU cores detected, using {num_workers} workers")
 
-    out_dir = Path("./qwen3_asr_data")
     out_dir.mkdir(exist_ok=True)
 
     # ALL datasets for Round 2.5 (including Knesset!)
@@ -261,9 +362,16 @@ def main():
     print(f"  - eval.jsonl: {len(eval_lines):,} examples")
     print(f"  - audio/: WAV files")
     print()
-    print("Next steps:")
-    print("  1. Upload to Lambda storage: ./scripts/upload_to_lambda_storage.sh")
-    print("  2. Launch GPU training: See ROUND2.5_LAUNCH_GUIDE.md")
+
+    # Upload to Lambda storage if requested
+    if args.upload:
+        upload_to_lambda_storage(out_dir)
+    else:
+        print("Next steps:")
+        print("  1. Upload to Lambda storage: uv run python prepare_qwen_data.py --upload-only")
+        print("     (Or use: ./scripts/upload_to_lambda_storage.sh)")
+        print("  2. Launch GPU training: See ROUND2.5_LAUNCH_GUIDE.md")
+
     print("=" * 70)
 
 
