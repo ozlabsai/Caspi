@@ -39,11 +39,11 @@ import torchaudio
 import torchaudio.transforms as T
 from datasets import load_dataset, concatenate_datasets, Audio, Dataset, interleave_datasets
 from transformers import (
-    AutoModelForSpeechSeq2Seq,
-    AutoProcessor,
     Seq2SeqTrainingArguments,
     Seq2SeqTrainer,
 )
+# Use qwen_asr package for model loading (supports qwen3_asr architecture)
+from qwen_asr import AutoProcessor, AutoModelForSpeechSeq2Seq
 # PEFT/LoRA not used - doing full fine-tuning for SOTA
 import evaluate
 import wandb
