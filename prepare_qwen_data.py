@@ -200,8 +200,10 @@ def process_dataset(name, output_dir, split, num_workers=None, streaming=False):
     if streaming:
         ds = load_dataset(name, split="train", streaming=True)
     else:
-        print(f"  Using {num_workers} parallel downloads (num_proc)")
-        ds = load_dataset(name, split="train", streaming=False, num_proc=num_workers)
+        # For download, cap at 32 workers (network I/O bound, diminishing returns beyond this)
+        download_workers = min(num_workers, 32)
+        print(f"  Using {download_workers} parallel downloads (num_proc)")
+        ds = load_dataset(name, split="train", streaming=False, num_proc=download_workers)
 
     # For streaming, we'll process in batches without loading all to memory
     if streaming:
