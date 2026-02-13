@@ -41,9 +41,10 @@ from datasets import load_dataset, concatenate_datasets, Audio, Dataset, interle
 from transformers import (
     Seq2SeqTrainingArguments,
     Seq2SeqTrainer,
+    AutoProcessor,
 )
 # Use qwen_asr package for model loading (supports qwen3_asr architecture)
-from qwen_asr import AutoProcessor, AutoModelForSpeechSeq2Seq
+from qwen_asr import Qwen3ASRModel
 # PEFT/LoRA not used - doing full fine-tuning for SOTA
 import evaluate
 import wandb
@@ -1210,13 +1211,12 @@ def main():
 
     # Load processor and model
     print("\nLoading model...")
-    processor = AutoProcessor.from_pretrained(config.model_name)
+    processor = AutoProcessor.from_pretrained(config.model_name, trust_remote_code=True)
 
-    model = AutoModelForSpeechSeq2Seq.from_pretrained(
+    model = Qwen3ASRModel.from_pretrained(
         config.model_name,
         torch_dtype=torch.bfloat16 if config.bf16 else torch.float32,
         device_map="auto",
-        trust_remote_code=True,
     )
 
     if config.gradient_checkpointing:
