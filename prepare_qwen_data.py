@@ -196,7 +196,12 @@ def process_dataset(name, output_dir, split, num_workers=None, streaming=False):
 
     # Load dataset (streaming mode if requested)
     print("  Loading dataset...")
-    ds = load_dataset(name, split="train", streaming=streaming)
+    # Use num_proc for parallel download (only for non-streaming mode)
+    if streaming:
+        ds = load_dataset(name, split="train", streaming=True)
+    else:
+        print(f"  Using {num_workers} parallel downloads (num_proc)")
+        ds = load_dataset(name, split="train", streaming=False, num_proc=num_workers)
 
     # For streaming, we'll process in batches without loading all to memory
     if streaming:
