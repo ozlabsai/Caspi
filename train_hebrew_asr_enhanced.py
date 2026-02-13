@@ -477,30 +477,43 @@ class HebrewASRDataPreprocessor:
         return example
 
     def _chunk_long_audio(self, dataset: Dataset) -> Dataset:
-        """Apply audio chunking with overlap."""
+        """Apply audio chunking with overlap using parallel processing."""
 
-        chunked_examples = []
-
-        for example in dataset:
+        def chunk_example(example):
+            """Chunk a single example, returning multiple examples if needed."""
             audio_array = example["audio"]["array"]
             transcript = example["text"]
 
             # Chunk this example
             chunks = self.audio_chunker.chunk_audio(audio_array, transcript)
 
-            # Create new examples for each chunk
-            for chunk_audio, chunk_text in chunks:
-                chunked_examples.append({
-                    "audio": {
-                        "array": chunk_audio,
-                        "sampling_rate": self.target_sampling_rate
-                    },
-                    "text": chunk_text
-                })
+            # Return lists of chunked data
+            return {
+                "audio": [
+                    {"array": chunk_audio, "sampling_rate": self.target_sampling_rate}
+                    for chunk_audio, chunk_text in chunks
+                ],
+                "text": [chunk_text for chunk_audio, chunk_text in chunks]
+            }
 
-        # Convert back to Dataset
+        # Use map with batched=False for per-example processing, remove_columns to avoid conflicts
+        chunked = dataset.map(
+            chunk_example,
+            remove_columns=dataset.column_names,
+            desc="Chunking audio",
+            num_proc=8  # Use 8 CPU cores for parallel processing
+        )
+
+        # Flatten the lists (each example may have produced multiple chunks)
         from datasets import Dataset as HFDataset
-        return HFDataset.from_list(chunked_examples)
+        from tqdm import tqdm
+
+        all_examples = []
+        for example in tqdm(chunked, desc="Flattening chunks", unit="examples"):
+            for audio, text in zip(example["audio"], example["text"]):
+                all_examples.append({"audio": audio, "text": text})
+
+        return HFDataset.from_list(all_examples)
 
     def apply_audio_augmentation(self, audio_array: np.ndarray) -> np.ndarray:
         """
