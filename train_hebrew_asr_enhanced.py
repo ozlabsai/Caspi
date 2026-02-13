@@ -135,11 +135,7 @@ class TrainingConfig:
                 "ivrit-ai/crowd-transcribe-v5",
                 "ivrit-ai/crowd-recital-whisper-training"
             ]
-        if self.lora_target_modules is None:
-            self.lora_target_modules = [
-                "q_proj", "k_proj", "v_proj", "o_proj",
-                "gate_proj", "up_proj", "down_proj"
-            ]
+        # LoRA removed for full fine-tuning - no lora_target_modules needed
         if self.duration_buckets is None:
             # Per training-suggestion.md Phase 1, section 3
             self.duration_buckets = {
