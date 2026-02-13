@@ -1213,11 +1213,16 @@ def main():
     print("\nLoading model...")
     processor = AutoProcessor.from_pretrained(config.model_name, trust_remote_code=True)
 
-    model = Qwen3ASRModel.from_pretrained(
+    # Load via Qwen3ASRModel wrapper to get the model registered properly
+    wrapper = Qwen3ASRModel.from_pretrained(
         config.model_name,
         torch_dtype=torch.bfloat16 if config.bf16 else torch.float32,
         device_map="auto",
     )
+
+    # Extract the actual PyTorch model for training (Qwen3ASRForConditionalGeneration)
+    model = wrapper.model
+    print(f"✓ Unwrapped model type: {type(model).__name__}")
 
     # Gradient checkpointing not available on Qwen3ASRModel
     # if config.gradient_checkpointing:
