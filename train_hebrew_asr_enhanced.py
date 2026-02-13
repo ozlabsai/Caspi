@@ -195,6 +195,9 @@ class HebrewTextNormalizer:
         Returns:
             Normalized text
         """
+        # Handle None or empty text
+        if text is None or (isinstance(text, str) and not text.strip()):
+            return ""
 
         # 1. Decide timestamp preservation (ivrit.ai: 40% keep)
         if keep_timestamps is None:
@@ -421,6 +424,13 @@ class HebrewASRDataPreprocessor:
             self._normalize_text,
             desc="Text normalization"
         )
+
+        # Filter out examples with empty text after normalization
+        combined = combined.filter(
+            lambda x: x["text"] is not None and len(x["text"].strip()) > 0,
+            desc="Removing empty transcripts"
+        )
+        print(f"✓ After removing empty texts: {len(combined)} examples")
 
         # Apply audio chunking
         print("\nChunking long audio...")
