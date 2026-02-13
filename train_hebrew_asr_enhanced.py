@@ -1219,8 +1219,9 @@ def main():
         device_map="auto",
     )
 
-    if config.gradient_checkpointing:
-        model.gradient_checkpointing_enable()
+    # Gradient checkpointing not available on Qwen3ASRModel
+    # if config.gradient_checkpointing:
+    #     model.gradient_checkpointing_enable()
 
     # Round 2.5: Full fine-tuning with gradual unfreezing (NO LoRA)
     # Strategy B: Freeze most params initially, unfreeze gradually
