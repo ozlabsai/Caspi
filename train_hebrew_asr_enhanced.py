@@ -706,9 +706,10 @@ class DataCollatorSpeechSeq2SeqWithPadding:
     to audio spectrograms, proven to reduce WER by 5-15% in ASR tasks.
     """
 
-    def __init__(self, processor, config: TrainingConfig = None):
+    def __init__(self, processor, config: TrainingConfig = None, preprocessor=None):
         self.processor = processor
         self.config = config or TrainingConfig()
+        self.preprocessor = preprocessor  # For on-the-fly augmentation
 
     def apply_specaugment(self, input_features: torch.Tensor) -> torch.Tensor:
         """
@@ -744,6 +745,19 @@ class DataCollatorSpeechSeq2SeqWithPadding:
         return augmented
 
     def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
+        # Handle raw audio if preprocessor is available (on-the-fly preprocessing)
+        if self.preprocessor and "audio" in features[0]:
+            # Apply preprocessing on-the-fly to avoid 228-hour preprocessing step
+            features = self.preprocessor.preprocess_function(
+                {"audio": [f["audio"] for f in features],
+                 "text": [f["text"] for f in features]}
+            )
+            # Convert to list of dicts
+            features = [
+                {"input_features": features["input_features"][i], "labels": features["labels"][i]}
+                for i in range(len(features["input_features"]))
+            ]
+
         # Separate inputs and labels
         input_features = [{"input_features": f["input_features"]} for f in features]
         labels = [f["labels"] for f in features]
@@ -1335,27 +1349,20 @@ def main():
     print(f"  Strategy: Full fine-tuning with gradual unfreezing (no LoRA adapters)")
     print(f"  Output: Complete standalone model")
 
-    # Load and preprocess datasets
+    # Load datasets (cached - loads in seconds!)
     preprocessor = HebrewASRDataPreprocessor(config, processor)
     train_dataset, eval_dataset = preprocessor.load_datasets()
 
-    print("\nPreprocessing for training...")
-    train_dataset = train_dataset.map(
-        preprocessor.preprocess_function,
-        batched=True,
-        remove_columns=train_dataset.column_names,
-        desc="Preprocessing train",
-    )
+    # Skip slow preprocessing - let data collator handle it during training
+    # This avoids 228+ hours of preprocessing before training starts
+    print("\n✓ Datasets loaded - preprocessing will happen during training batching")
 
-    eval_dataset = eval_dataset.map(
-        preprocessor.preprocess_function,
-        batched=True,
-        remove_columns=eval_dataset.column_names,
-        desc="Preprocessing eval",
+    # Data collator with SpecAugment (handles preprocessing + augmentation on-the-fly)
+    data_collator = DataCollatorSpeechSeq2SeqWithPadding(
+        processor,
+        config,
+        preprocessor=preprocessor  # Pass preprocessor for on-the-fly augmentation
     )
-
-    # Data collator with SpecAugment
-    data_collator = DataCollatorSpeechSeq2SeqWithPadding(processor, config)
 
     # Metrics
     wer_metric = evaluate.load("wer")
