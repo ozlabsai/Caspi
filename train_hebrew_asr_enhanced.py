@@ -573,10 +573,15 @@ class HebrewASRDataPreprocessor:
         if random.random() < 0.7:  # 70% apply speed perturb
             speed_factor = random.choice(self.config.speed_perturb_factors)
             if speed_factor != 1.0:
-                effects = [["speed", str(speed_factor)], ["rate", str(self.target_sampling_rate)]]
-                audio_tensor, _ = torchaudio.sox_effects.apply_effects_tensor(
-                    audio_tensor, self.target_sampling_rate, effects
-                )
+                # Use torchaudio.functional for speed perturbation (sox_effects removed in v2.1+)
+                # Speed up/down by resampling
+                target_length = int(len(audio_tensor[0]) / speed_factor)
+                audio_tensor = torch.nn.functional.interpolate(
+                    audio_tensor.unsqueeze(0),
+                    size=target_length,
+                    mode='linear',
+                    align_corners=False
+                ).squeeze(0)
 
         # 2. Pitch shifting (+/- 2 semitones)
         if random.random() < 0.3:  # 30% apply pitch shift
