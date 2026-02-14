@@ -498,62 +498,46 @@ class HebrewASRDataPreprocessor:
         return example
 
     def _chunk_long_audio(self, dataset: Dataset) -> Dataset:
-        """Apply audio chunking with overlap using parallel processing."""
-
-        def chunk_example(example):
-            """Chunk a single example, returning multiple examples if needed."""
-            audio_array = example["audio"]["array"]
-            transcript = example["text"]
-
-            # Chunk this example
-            chunks = self.audio_chunker.chunk_audio(audio_array, transcript)
-
-            # Return lists of chunked data
-            return {
-                "audio": [
-                    {"array": chunk_audio, "sampling_rate": self.target_sampling_rate}
-                    for chunk_audio, chunk_text in chunks
-                ],
-                "text": [chunk_text for chunk_audio, chunk_text in chunks]
-            }
-
-        # Use map with batched=False for per-example processing, remove_columns to avoid conflicts
-        chunked = dataset.map(
-            chunk_example,
-            remove_columns=dataset.column_names,
-            desc="Chunking audio",
-            num_proc=100  # Use 100 CPU cores for parallel audio processing (CPU-bound)
-        )
-
-        # Flatten the lists (each example may have produced multiple chunks)
-        # Use batched iteration for much better performance
+        """Apply audio chunking with overlap using batched parallel processing."""
         from datasets import Dataset as HFDataset
 
-        print("Flattening chunks...")
+        max_samples = int(self.config.max_audio_length_seconds * self.target_sampling_rate)
 
-        def flatten_batch(batch):
-            """Flatten batched lists of chunks."""
-            flattened_audio = []
-            flattened_text = []
+        def chunk_batch(batch):
+            """Chunk a batch of examples, skipping short audio for speed."""
+            all_audio = []
+            all_text = []
 
-            # Each batch item contains lists of chunks
-            for audio_list, text_list in zip(batch["audio"], batch["text"]):
-                flattened_audio.extend(audio_list)
-                flattened_text.extend(text_list)
+            for audio, text in zip(batch["audio"], batch["text"]):
+                audio_array = audio["array"]
 
-            return {"audio": flattened_audio, "text": flattened_text}
+                # Fast path: skip chunking for short audio (most examples)
+                if len(audio_array) <= max_samples:
+                    all_audio.append(audio)
+                    all_text.append(text)
+                else:
+                    # Only chunk long audio
+                    chunks = self.audio_chunker.chunk_audio(audio_array, text)
+                    for chunk_audio, chunk_text in chunks:
+                        all_audio.append({
+                            "array": chunk_audio,
+                            "sampling_rate": self.target_sampling_rate
+                        })
+                        all_text.append(chunk_text)
 
-        # Use batched map for efficient flattening (process 1000 examples at a time)
-        flattened = chunked.map(
-            flatten_batch,
+            return {"audio": all_audio, "text": all_text}
+
+        # Process in batches with parallel workers
+        chunked = dataset.map(
+            chunk_batch,
             batched=True,
-            batch_size=1000,
-            remove_columns=chunked.column_names,
-            desc="Flattening chunks",
-            num_proc=32  # Use 32 cores for parallel flattening
+            batch_size=100,  # Process 100 examples at a time
+            remove_columns=dataset.column_names,
+            desc="Chunking long audio",
+            num_proc=64  # Use 64 cores for batched processing
         )
 
-        return flattened
+        return chunked
 
     def apply_audio_augmentation(self, audio_array: np.ndarray) -> np.ndarray:
         """
