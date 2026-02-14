@@ -1396,7 +1396,7 @@ def main():
         predict_with_generate=True,
         generation_max_length=225,
         # Round 2 optimizations:
-        group_by_length=True,  # Simple length-based bucketing
+        group_by_length=False,  # Disabled: requires preprocessed dataset with input_features
         max_grad_norm=config.max_grad_norm,  # Gradient clipping for stability
         optim="adamw_torch_fused",  # Faster fused optimizer (2x speedup)
         weight_decay=config.weight_decay,  # L2 regularization (AdamW standard)
