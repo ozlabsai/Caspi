@@ -418,17 +418,19 @@ class HebrewASRDataPreprocessor:
         )
         print(f"✓ Interleaved: {len(combined)} examples")
 
-        # Apply text normalization
+        # Apply text normalization (CPU-bound: regex operations)
         print("\nNormalizing transcripts...")
         combined = combined.map(
             self._normalize_text,
-            desc="Text normalization"
+            desc="Text normalization",
+            num_proc=64  # Use 64 cores for parallel text processing
         )
 
         # Filter out examples with empty text after normalization
         combined = combined.filter(
             lambda x: x["text"] is not None and len(x["text"].strip()) > 0,
-            desc="Removing empty transcripts"
+            desc="Removing empty transcripts",
+            num_proc=32  # Use 32 cores for parallel filtering
         )
         print(f"✓ After removing empty texts: {len(combined)} examples")
 
@@ -437,12 +439,13 @@ class HebrewASRDataPreprocessor:
         combined = self._chunk_long_audio(combined)
         print(f"✓ After chunking: {len(combined)} examples")
 
-        # Filter by duration
+        # Filter by duration (CPU-bound: array length checks)
         combined = combined.filter(
             lambda x: self.config.min_audio_length_seconds <=
                      len(x["audio"]["array"]) / self.target_sampling_rate <=
                      self.config.max_audio_length_seconds,
-            desc="Duration filtering"
+            desc="Duration filtering",
+            num_proc=32  # Use 32 cores for parallel filtering
         )
         print(f"✓ After filtering: {len(combined)} examples")
 
@@ -501,7 +504,7 @@ class HebrewASRDataPreprocessor:
             chunk_example,
             remove_columns=dataset.column_names,
             desc="Chunking audio",
-            num_proc=8  # Use 8 CPU cores for parallel processing
+            num_proc=100  # Use 100 CPU cores for parallel audio processing (CPU-bound)
         )
 
         # Flatten the lists (each example may have produced multiple chunks)
@@ -528,7 +531,8 @@ class HebrewASRDataPreprocessor:
             batched=True,
             batch_size=1000,
             remove_columns=chunked.column_names,
-            desc="Flattening chunks"
+            desc="Flattening chunks",
+            num_proc=32  # Use 32 cores for parallel flattening
         )
 
         return flattened
