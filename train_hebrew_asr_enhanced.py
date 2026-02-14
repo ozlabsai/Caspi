@@ -342,7 +342,8 @@ class HebrewASRDataPreprocessor:
     def __init__(self, config: TrainingConfig, processor):
         self.config = config
         self.processor = processor
-        self.target_sampling_rate = processor.feature_extractor.sampling_rate
+        # Cast to int for torchcodec compatibility
+        self.target_sampling_rate = int(processor.feature_extractor.sampling_rate)
 
         # Initialize components
         self.text_normalizer = HebrewTextNormalizer(config)
@@ -513,7 +514,10 @@ class HebrewASRDataPreprocessor:
 
                 # Fast path: skip chunking for short audio (most examples)
                 if len(audio_array) <= max_samples:
-                    all_audio.append(audio)
+                    # Ensure sampling_rate is int for torchcodec compatibility
+                    audio_copy = audio.copy()
+                    audio_copy["sampling_rate"] = int(audio["sampling_rate"])
+                    all_audio.append(audio_copy)
                     all_text.append(text)
                 else:
                     # Only chunk long audio
@@ -521,7 +525,7 @@ class HebrewASRDataPreprocessor:
                     for chunk_audio, chunk_text in chunks:
                         all_audio.append({
                             "array": chunk_audio,
-                            "sampling_rate": self.target_sampling_rate
+                            "sampling_rate": int(self.target_sampling_rate)  # Cast to int
                         })
                         all_text.append(chunk_text)
 
