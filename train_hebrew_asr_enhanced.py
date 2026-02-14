@@ -514,10 +514,11 @@ class HebrewASRDataPreprocessor:
 
                 # Fast path: skip chunking for short audio (most examples)
                 if len(audio_array) <= max_samples:
-                    # Ensure sampling_rate is int for torchcodec compatibility
-                    audio_copy = audio.copy()
-                    audio_copy["sampling_rate"] = int(audio["sampling_rate"])
-                    all_audio.append(audio_copy)
+                    # Recreate audio dict with int sampling_rate for torchcodec compatibility
+                    all_audio.append({
+                        "array": audio_array,
+                        "sampling_rate": int(self.target_sampling_rate)
+                    })
                     all_text.append(text)
                 else:
                     # Only chunk long audio
