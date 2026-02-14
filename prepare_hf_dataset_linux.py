@@ -380,10 +380,26 @@ def create_hf_dataset(samples: List[Dict], config: DatasetConfig) -> DatasetDict
 
     # Create datasets
     print(f"\n  Creating train dataset...")
-    train_ds = Dataset.from_dict(train_dict, features=features)
+    print(f"    This may take 5-10 minutes for {len(train_dict['audio']):,} samples...")
+    try:
+        train_ds = Dataset.from_dict(train_dict, features=features)
+        print(f"    ✓ Train dataset created")
+    except Exception as e:
+        print(f"    ✗ Error creating train dataset: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
 
     print(f"  Creating eval dataset...")
-    eval_ds = Dataset.from_dict(eval_dict, features=features)
+    print(f"    This may take 1-2 minutes for {len(eval_dict['audio']):,} samples...")
+    try:
+        eval_ds = Dataset.from_dict(eval_dict, features=features)
+        print(f"    ✓ Eval dataset created")
+    except Exception as e:
+        print(f"    ✗ Error creating eval dataset: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
 
     dataset_dict = DatasetDict({
         'train': train_ds,
