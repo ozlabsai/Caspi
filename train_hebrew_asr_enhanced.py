@@ -503,12 +503,13 @@ class HebrewASRDataPreprocessor:
         print(f"\n✓ Train: {len(split['train'])} examples")
         print(f"✓ Validation: {len(split['test'])} examples")
 
-        # Cache the preprocessed datasets for faster restarts
-        print("\nCaching preprocessed datasets...")
-        cache_dir.mkdir(exist_ok=True)
-        split["train"].save_to_disk(str(train_cache))
-        split["test"].save_to_disk(str(eval_cache))
-        print(f"✓ Cached to {cache_dir}")
+        # Skip caching - it's too slow (1.5+ hours) and fills disk
+        # Users can manually cache if needed by uncommenting below
+        # print("\nCaching preprocessed datasets...")
+        # cache_dir.mkdir(exist_ok=True)
+        # split["train"].save_to_disk(str(train_cache))
+        # split["test"].save_to_disk(str(eval_cache))
+        # print(f"✓ Cached to {cache_dir}")
 
         return split["train"], split["test"]
 
