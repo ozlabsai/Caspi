@@ -348,8 +348,18 @@ def create_hf_dataset(samples: List[Dict], config: DatasetConfig) -> DatasetDict
 
     # Convert to dict format
     def samples_to_dict(samples_list):
+        # Convert audio arrays to proper format for Audio feature
+        audio_dicts = []
+        for s in samples_list:
+            audio_array = s['audio']
+            # Audio feature expects dict with 'array' and 'sampling_rate'
+            audio_dicts.append({
+                'array': audio_array,
+                'sampling_rate': config.sampling_rate
+            })
+
         return {
-            'audio': [s['audio'] for s in samples_list],
+            'audio': audio_dicts,
             'text': [s['text'] for s in samples_list],
             'context': [s['context'] for s in samples_list],
             'source': [s['source'] for s in samples_list],
