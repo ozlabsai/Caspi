@@ -1016,7 +1016,7 @@ class GradualUnfreezeTrainer(Seq2SeqTrainer):
         with torch.cuda.amp.autocast(dtype=torch.bfloat16, enabled=self.args.bf16):
             return super().prediction_step(model, inputs, prediction_loss_only, ignore_keys)
 
-    def training_step(self, model, inputs, num_items_in_batch=None):
+    def training_step(self, model, inputs):
         """Override to check for epoch-based unfreezing."""
         current_epoch = int(self.state.epoch) if self.state.epoch is not None else 1
 
@@ -1045,11 +1045,7 @@ class GradualUnfreezeTrainer(Seq2SeqTrainer):
             print("✓ Strategy A activated: Projector + Audio Top + LLM Top")
             print("="*70 + "\n")
 
-        # Pass num_items_in_batch if parent accepts it (transformers 4.x)
-        if num_items_in_batch is not None:
-            return super().training_step(model, inputs, num_items_in_batch)
-        else:
-            return super().training_step(model, inputs)
+        return super().training_step(model, inputs)
 
     def log_metrics(self, logs, step):
         """
