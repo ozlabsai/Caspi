@@ -1392,7 +1392,7 @@ def main():
         gradient_checkpointing=config.gradient_checkpointing,
         push_to_hub=True,
         hub_model_id=f"{config.output_dir.replace('./', '')}",
-        report_to=["wandb", "tensorboard"],
+        report_to=["wandb"],  # Only W&B (tensorboard not installed)
         predict_with_generate=True,
         generation_max_length=225,
         # Round 2 optimizations:
