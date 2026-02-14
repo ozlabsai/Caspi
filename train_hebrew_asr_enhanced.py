@@ -1379,7 +1379,7 @@ def main():
         warmup_ratio=config.warmup_ratio,  # 10% warmup (modern best practice)
         lr_scheduler_type=config.lr_scheduler_type,  # Cosine with warmup (SOTA 2025)
         num_train_epochs=config.num_epochs,
-        evaluation_strategy="steps",
+        eval_strategy="steps",  # Renamed from evaluation_strategy in transformers 4.x
         eval_steps=config.eval_steps,
         save_steps=config.save_steps,
         logging_steps=config.logging_steps,
