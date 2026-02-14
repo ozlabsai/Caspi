@@ -640,8 +640,8 @@ class HebrewASRDataPreprocessor:
             noise = torch.randn_like(audio_tensor) * torch.sqrt(noise_power)
             audio_tensor = audio_tensor + noise
 
-        # Convert back to numpy
-        return audio_tensor.squeeze(0).numpy()
+        # Convert back to numpy (detach to remove gradient tracking)
+        return audio_tensor.squeeze(0).detach().numpy()
 
     def preprocess_function(self, examples: Dict[str, Any]) -> Dict[str, Any]:
         """
