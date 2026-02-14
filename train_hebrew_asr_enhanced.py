@@ -362,10 +362,35 @@ class HebrewASRDataPreprocessor:
 
         Uses sampling probabilities to balance formal (Knesset) vs informal (crowd)
         for better generalization on diverse eval sets.
+
+        Caches preprocessed dataset to avoid reprocessing on restarts.
         """
+        from pathlib import Path
+
+        # Check for cached preprocessed dataset
+        cache_dir = Path("./preprocessed_dataset_cache")
+        train_cache = cache_dir / "train"
+        eval_cache = cache_dir / "eval"
+
+        if train_cache.exists() and eval_cache.exists():
+            print("=" * 60)
+            print("Loading CACHED preprocessed datasets")
+            print("=" * 60)
+            from datasets import load_from_disk
+
+            train_dataset = load_from_disk(str(train_cache))
+            eval_dataset = load_from_disk(str(eval_cache))
+
+            print(f"\n✓ Loaded from cache:")
+            print(f"  Train: {len(train_dataset)} examples")
+            print(f"  Validation: {len(eval_dataset)} examples")
+
+            return train_dataset, eval_dataset
+
         print("=" * 60)
         print("Loading Hebrew ASR Datasets (Balanced Sampling)")
         print("=" * 60)
+        print("(Will cache after preprocessing for faster restarts)")
 
         datasets_dict = {}
         sampling_probs = []
@@ -473,6 +498,13 @@ class HebrewASRDataPreprocessor:
 
         print(f"\n✓ Train: {len(split['train'])} examples")
         print(f"✓ Validation: {len(split['test'])} examples")
+
+        # Cache the preprocessed datasets for faster restarts
+        print("\nCaching preprocessed datasets...")
+        cache_dir.mkdir(exist_ok=True)
+        split["train"].save_to_disk(str(train_cache))
+        split["test"].save_to_disk(str(eval_cache))
+        print(f"✓ Cached to {cache_dir}")
 
         return split["train"], split["test"]
 
