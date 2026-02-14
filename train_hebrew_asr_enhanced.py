@@ -467,13 +467,15 @@ class HebrewASRDataPreprocessor:
             }
 
         # Single batched pass: normalize + filter
+        # Disable caching to avoid filling disk with intermediate files
         combined = combined.map(
             normalize_and_filter,
             batched=True,
             batch_size=1000,
             remove_columns=combined.column_names,
             desc="Normalizing and filtering",
-            num_proc=64  # Use 64 cores for parallel processing
+            num_proc=64,  # Use 64 cores for parallel processing
+            load_from_cache_file=False  # Disable intermediate caching
         )
 
         print(f"✓ After normalization and filtering: {len(combined)} examples")
@@ -484,12 +486,14 @@ class HebrewASRDataPreprocessor:
         print(f"✓ After chunking: {len(combined)} examples")
 
         # Filter by duration (CPU-bound: array length checks)
+        # Disable caching to avoid filling disk with intermediate files
         combined = combined.filter(
             lambda x: self.config.min_audio_length_seconds <=
                      len(x["audio"]["array"]) / self.target_sampling_rate <=
                      self.config.max_audio_length_seconds,
             desc="Duration filtering",
-            num_proc=32  # Use 32 cores for parallel filtering
+            num_proc=32,  # Use 32 cores for parallel filtering
+            load_from_cache_file=False  # Disable intermediate caching
         )
         print(f"✓ After filtering: {len(combined)} examples")
 
@@ -565,13 +569,15 @@ class HebrewASRDataPreprocessor:
             return {"audio": all_audio, "text": all_text}
 
         # Process in batches with parallel workers
+        # Disable caching to avoid filling disk with intermediate files
         chunked = dataset.map(
             chunk_batch,
             batched=True,
             batch_size=100,  # Process 100 examples at a time
             remove_columns=dataset.column_names,
             desc="Chunking long audio",
-            num_proc=64  # Use 64 cores for batched processing
+            num_proc=64,  # Use 64 cores for batched processing
+            load_from_cache_file=False  # Disable intermediate caching
         )
 
         return chunked
