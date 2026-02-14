@@ -81,17 +81,16 @@ def extract_knesset_with_context(config: DatasetConfig) -> List[Dict]:
     ds_limited = ds.take(config.knesset_samples * 3)
 
     samples = []
-    episode_history = defaultdict(list)  # episode_id -> list of transcripts
-    skipped = 0
+    skip_reasons = defaultdict(int)  # Track why samples are skipped
 
     for idx, example in enumerate(tqdm(ds_limited, desc="Knesset", total=config.knesset_samples)):
         if len(samples) >= config.knesset_samples:
             break
 
-        # Extract text
-        text = normalize_text(example.get('sentence') or example.get('text', ''))
+        # Extract text (Knesset uses 'transcript' column)
+        text = normalize_text(example.get('transcript', ''))
         if not text or len(text.strip()) < 3:
-            skipped += 1
+            skip_reasons['empty_text'] += 1
             continue
 
         try:
@@ -102,8 +101,11 @@ def extract_knesset_with_context(config: DatasetConfig) -> List[Dict]:
 
             # Duration filter
             duration = len(audio_array) / sampling_rate
-            if duration < config.min_duration or duration > config.max_duration:
-                skipped += 1
+            if duration < config.min_duration:
+                skip_reasons['too_short'] += 1
+                continue
+            if duration > config.max_duration:
+                skip_reasons['too_long'] += 1
                 continue
 
             # Resample to 16kHz if needed
@@ -114,19 +116,18 @@ def extract_knesset_with_context(config: DatasetConfig) -> List[Dict]:
                     target_sr=config.sampling_rate
                 )
 
-            # Get episode ID for context tracking
-            episode_id = example.get('episode_id', f"unknown_{idx}")
-
-            # Get previous context (if available and with probability)
+            # Get previous context (Knesset already provides this!)
             context = ""
-            if episode_id in episode_history and len(episode_history[episode_id]) > 0:
-                if np.random.random() < config.context_prob:
-                    context = episode_history[episode_id][-1]
+            has_prev = example.get('has_prev', False)
+            if has_prev and np.random.random() < config.context_prob:
+                # Use the provided prev_transcript
+                prev_text = example.get('prev_transcript', '')
+                if prev_text:
+                    context = normalize_text(prev_text)
 
-            # Store this transcript for future context
-            episode_history[episode_id].append(text)
-            if len(episode_history[episode_id]) > 3:  # Keep last 3 only (memory)
-                episode_history[episode_id].pop(0)
+            # Get metadata for episode tracking (optional, for stats)
+            metadata = example.get('metadata', {})
+            episode_id = metadata.get('episode_id', f"unknown_{idx}")
 
             # Create sample
             sample = {
@@ -140,12 +141,26 @@ def extract_knesset_with_context(config: DatasetConfig) -> List[Dict]:
             samples.append(sample)
 
         except Exception as e:
-            skipped += 1
+            skip_reasons[f'exception: {type(e).__name__}'] += 1
+            # Print first few exceptions for debugging
+            if sum(1 for k in skip_reasons.keys() if 'exception' in k) <= 3:
+                print(f"\n  Debug - Exception on example {idx}: {e}")
             continue
 
     print(f"✓ Extracted {len(samples):,} Knesset samples")
-    print(f"  Samples with context: {sum(1 for s in samples if s['context']):,} ({sum(1 for s in samples if s['context'])/len(samples)*100:.1f}%)")
-    print(f"  Skipped: {skipped:,}")
+    if len(samples) > 0:
+        print(f"  Samples with context: {sum(1 for s in samples if s['context']):,} ({sum(1 for s in samples if s['context'])/len(samples)*100:.1f}%)")
+    else:
+        print(f"  ⚠ WARNING: No valid samples extracted!")
+
+    # Print skip reasons
+    total_skipped = sum(skip_reasons.values())
+    print(f"  Skipped: {total_skipped:,}")
+    if skip_reasons:
+        print(f"  Skip reasons:")
+        for reason, count in sorted(skip_reasons.items(), key=lambda x: -x[1]):
+            print(f"    - {reason}: {count:,} ({count/total_skipped*100:.1f}%)")
+
     return samples
 
 
@@ -165,7 +180,7 @@ def load_crowd_transcribe_from_jsonl(config: DatasetConfig) -> List[Dict]:
         return load_crowd_transcribe_streaming(config)
 
     samples = []
-    skipped = 0
+    skip_reasons = defaultdict(int)
 
     with open(jsonl_path, 'r', encoding='utf-8') as f:
         for line_num, line in enumerate(tqdm(f, desc="Crowd-transcribe", total=config.crowd_samples)):
@@ -175,7 +190,7 @@ def load_crowd_transcribe_from_jsonl(config: DatasetConfig) -> List[Dict]:
                 # Load audio from WAV file
                 audio_path = Path(entry['audio'])
                 if not audio_path.exists():
-                    skipped += 1
+                    skip_reasons['missing_audio_file'] += 1
                     continue
 
                 audio_array, sr = sf.read(str(audio_path))
@@ -196,12 +211,15 @@ def load_crowd_transcribe_from_jsonl(config: DatasetConfig) -> List[Dict]:
                 text = normalize_text(text)
 
                 if not text or len(text.strip()) < 3:
-                    skipped += 1
+                    skip_reasons['empty_text'] += 1
                     continue
 
                 duration = len(audio_array) / config.sampling_rate
-                if duration < config.min_duration or duration > config.max_duration:
-                    skipped += 1
+                if duration < config.min_duration:
+                    skip_reasons['too_short'] += 1
+                    continue
+                if duration > config.max_duration:
+                    skip_reasons['too_long'] += 1
                     continue
 
                 sample = {
@@ -215,11 +233,18 @@ def load_crowd_transcribe_from_jsonl(config: DatasetConfig) -> List[Dict]:
                 samples.append(sample)
 
             except Exception as e:
-                skipped += 1
+                skip_reasons[f'exception: {type(e).__name__}'] += 1
+                if sum(1 for k in skip_reasons.keys() if 'exception' in k) <= 3:
+                    print(f"\n  Debug - Exception on line {line_num}: {e}")
                 continue
 
     print(f"✓ Loaded {len(samples):,} crowd-transcribe samples")
-    print(f"  Skipped: {skipped:,}")
+    total_skipped = sum(skip_reasons.values())
+    print(f"  Skipped: {total_skipped:,}")
+    if skip_reasons:
+        print(f"  Skip reasons:")
+        for reason, count in sorted(skip_reasons.items(), key=lambda x: -x[1]):
+            print(f"    - {reason}: {count:,} ({count/total_skipped*100:.1f}%)")
     return samples
 
 
@@ -239,7 +264,7 @@ def load_crowd_transcribe_streaming(config: DatasetConfig) -> List[Dict]:
     ds_limited = ds.take(config.crowd_samples * 2)
 
     samples = []
-    skipped = 0
+    skip_reasons = defaultdict(int)
 
     for idx, example in enumerate(tqdm(ds_limited, desc="Crowd-transcribe (streaming)", total=config.crowd_samples)):
         if len(samples) >= config.crowd_samples:
@@ -247,7 +272,7 @@ def load_crowd_transcribe_streaming(config: DatasetConfig) -> List[Dict]:
 
         text = normalize_text(example.get('sentence') or example.get('text', ''))
         if not text or len(text.strip()) < 3:
-            skipped += 1
+            skip_reasons['empty_text'] += 1
             continue
 
         try:
@@ -256,8 +281,11 @@ def load_crowd_transcribe_streaming(config: DatasetConfig) -> List[Dict]:
             sampling_rate = int(audio_dict['sampling_rate'])
 
             duration = len(audio_array) / sampling_rate
-            if duration < config.min_duration or duration > config.max_duration:
-                skipped += 1
+            if duration < config.min_duration:
+                skip_reasons['too_short'] += 1
+                continue
+            if duration > config.max_duration:
+                skip_reasons['too_long'] += 1
                 continue
 
             if sampling_rate != config.sampling_rate:
@@ -278,11 +306,18 @@ def load_crowd_transcribe_streaming(config: DatasetConfig) -> List[Dict]:
             samples.append(sample)
 
         except Exception as e:
-            skipped += 1
+            skip_reasons[f'exception: {type(e).__name__}'] += 1
+            if sum(1 for k in skip_reasons.keys() if 'exception' in k) <= 3:
+                print(f"\n  Debug - Exception on example {idx}: {e}")
             continue
 
     print(f"✓ Streamed {len(samples):,} crowd-transcribe samples")
-    print(f"  Skipped: {skipped:,}")
+    total_skipped = sum(skip_reasons.values())
+    print(f"  Skipped: {total_skipped:,}")
+    if skip_reasons:
+        print(f"  Skip reasons:")
+        for reason, count in sorted(skip_reasons.items(), key=lambda x: -x[1]):
+            print(f"    - {reason}: {count:,} ({count/total_skipped*100:.1f}%)")
     return samples
 
 
