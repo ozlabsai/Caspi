@@ -505,15 +505,33 @@ class HebrewASRDataPreprocessor:
         )
 
         # Flatten the lists (each example may have produced multiple chunks)
+        # Use batched iteration for much better performance
         from datasets import Dataset as HFDataset
-        from tqdm import tqdm
 
-        all_examples = []
-        for example in tqdm(chunked, desc="Flattening chunks", unit="examples"):
-            for audio, text in zip(example["audio"], example["text"]):
-                all_examples.append({"audio": audio, "text": text})
+        print("Flattening chunks...")
 
-        return HFDataset.from_list(all_examples)
+        def flatten_batch(batch):
+            """Flatten batched lists of chunks."""
+            flattened_audio = []
+            flattened_text = []
+
+            # Each batch item contains lists of chunks
+            for audio_list, text_list in zip(batch["audio"], batch["text"]):
+                flattened_audio.extend(audio_list)
+                flattened_text.extend(text_list)
+
+            return {"audio": flattened_audio, "text": flattened_text}
+
+        # Use batched map for efficient flattening (process 1000 examples at a time)
+        flattened = chunked.map(
+            flatten_batch,
+            batched=True,
+            batch_size=1000,
+            remove_columns=chunked.column_names,
+            desc="Flattening chunks"
+        )
+
+        return flattened
 
     def apply_audio_augmentation(self, audio_array: np.ndarray) -> np.ndarray:
         """
