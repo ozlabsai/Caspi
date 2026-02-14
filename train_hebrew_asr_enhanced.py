@@ -418,21 +418,39 @@ class HebrewASRDataPreprocessor:
         )
         print(f"✓ Interleaved: {len(combined)} examples")
 
-        # Apply text normalization (CPU-bound: regex operations)
-        print("\nNormalizing transcripts...")
+        # Apply text normalization and filter empty transcripts in single pass
+        print("\nNormalizing transcripts and filtering empties...")
+
+        def normalize_and_filter(batch):
+            """Normalize text and filter out empties in a single batched operation."""
+            # Normalize all texts in batch
+            normalized_texts = [
+                self.text_normalizer.normalize(text)
+                for text in batch["text"]
+            ]
+
+            # Filter out empties and keep corresponding audio
+            keep_indices = [
+                i for i, text in enumerate(normalized_texts)
+                if text and len(text.strip()) > 0
+            ]
+
+            return {
+                "audio": [batch["audio"][i] for i in keep_indices],
+                "text": [normalized_texts[i] for i in keep_indices]
+            }
+
+        # Single batched pass: normalize + filter
         combined = combined.map(
-            self._normalize_text,
-            desc="Text normalization",
-            num_proc=64  # Use 64 cores for parallel text processing
+            normalize_and_filter,
+            batched=True,
+            batch_size=1000,
+            remove_columns=combined.column_names,
+            desc="Normalizing and filtering",
+            num_proc=64  # Use 64 cores for parallel processing
         )
 
-        # Filter out examples with empty text after normalization
-        combined = combined.filter(
-            lambda x: x["text"] is not None and len(x["text"].strip()) > 0,
-            desc="Removing empty transcripts",
-            num_proc=32  # Use 32 cores for parallel filtering
-        )
-        print(f"✓ After removing empty texts: {len(combined)} examples")
+        print(f"✓ After normalization and filtering: {len(combined)} examples")
 
         # Apply audio chunking
         print("\nChunking long audio...")
