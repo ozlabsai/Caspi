@@ -1400,6 +1400,7 @@ def main():
         max_grad_norm=config.max_grad_norm,  # Gradient clipping for stability
         optim="adamw_torch_fused",  # Faster fused optimizer (2x speedup)
         weight_decay=config.weight_decay,  # L2 regularization (AdamW standard)
+        remove_unused_columns=False,  # Keep audio+text cols for data collator preprocessing
     )
 
     # Trainer (Round 2: Gradual Unfreezing)
