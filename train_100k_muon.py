@@ -160,15 +160,30 @@ class DataCollatorWithSpecAugment:
             self.freq_masking = T.FrequencyMasking(freq_mask_param=self.freq_mask_param)
 
     def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
-        audio_paths = [f["audio"] for f in features]
+        audio_data = [f["audio"] for f in features]
         prefix_texts = [f["prefix_text"] for f in features]
         targets = [f["target"] for f in features]
 
         eos = self.processor.tokenizer.eos_token or ""
         full_texts = [pfx + tgt + eos for pfx, tgt in zip(prefix_texts, targets)]
 
-        # Load audio files
-        audios = [load_audio(p, sr=self.sampling_rate) for p in audio_paths]
+        # Load audio - handle both HF dataset format (dict) and file paths (str)
+        audios = []
+        for audio in audio_data:
+            if isinstance(audio, dict):
+                # HuggingFace dataset format: {'array': np.array, 'sampling_rate': int}
+                audio_array = audio['array']
+                sr = audio['sampling_rate']
+                # Resample if needed
+                if sr != self.sampling_rate:
+                    import librosa
+                    audio_array = librosa.resample(audio_array, orig_sr=sr, target_sr=self.sampling_rate)
+                audios.append(audio_array)
+            elif isinstance(audio, str):
+                # File path format
+                audios.append(load_audio(audio, sr=self.sampling_rate))
+            else:
+                raise ValueError(f"Unexpected audio format: {type(audio)}")
 
         # Process with SpecAugment if training
         # Note: self.apply_spec_augment should be set to False during evaluation
