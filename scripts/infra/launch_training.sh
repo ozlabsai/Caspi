@@ -10,7 +10,7 @@ echo ""
 echo "Checking dataset..."
 if [ ! -f "qwen3_asr_data/train.jsonl" ]; then
     echo "ERROR: qwen3_asr_data/train.jsonl not found!"
-    echo "Run data prep first: uv run python prepare_qwen_data.py --workers 100"
+    echo "Run data prep first: uv run python training/prepare_qwen_data.py --workers 100"
     exit 1
 fi
 
@@ -78,7 +78,7 @@ echo "========================================="
 echo ""
 
 # Launch training
-uv run python train_hebrew_asr_enhanced.py
+uv run python training/train_hebrew_asr_enhanced.py
 
 echo ""
 echo "========================================="

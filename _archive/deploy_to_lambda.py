@@ -11,7 +11,7 @@ import subprocess
 from pathlib import Path
 
 # Lambda Labs API configuration
-LAMBDA_API_KEY = "secret_caspi_8cd6b8fc387c4be199fdfaa8b45c6c74.DGXQ21Z2ITZUSfxpW9UUU5xxxYtMw3XB"
+LAMBDA_API_KEY = os.environ.get("LAMBDA_API_KEY", "")
 INSTANCE_TYPE = "gpu_1x_a10"  # 1x A10 (24GB)
 REGION = "us-west-1"  # Default region
 INSTANCE_NAME = "qwen3-asr-hebrew-training"

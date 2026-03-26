@@ -25,7 +25,7 @@ import pandas as pd
 from tqdm import tqdm
 
 # Add parent directory to path
-sys.path.append(str(Path(__file__).parent.parent))
+sys.path.append(str(Path(__file__).parent.parent.parent))
 
 # Import existing benchmark infrastructure
 from qwen3_asr_hebrew_model.src.benchmarks import evaluate_dataset, calculate_wer

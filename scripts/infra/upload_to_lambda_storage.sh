@@ -19,7 +19,7 @@ fi
 # Check if dataset exists
 if [ ! -d "qwen3_asr_data" ]; then
     echo "ERROR: qwen3_asr_data/ directory not found"
-    echo "Run 'uv run python prepare_qwen_data.py' first"
+    echo "Run 'uv run python training/prepare_qwen_data.py' first"
     exit 1
 fi
 
@@ -70,5 +70,5 @@ echo "1. Launch Lambda GPU instance (8x H100 or 8x A100)"
 echo "2. Clone repo: git clone https://github.com/OzLabs/caspi.git && cd caspi"
 echo "3. Copy .env file to GPU instance (contains Lambda storage creds)"
 echo "4. Run: ./scripts/download_from_lambda_storage.sh"
-echo "5. Run: uv run python train_hebrew_asr_enhanced.py"
+echo "5. Run: uv run python training/train_hebrew_asr_enhanced.py"
 echo ""
